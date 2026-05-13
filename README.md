@@ -1,6 +1,6 @@
-# app
+# Split
 
-Split
+Vibe-coded with Claude 🤖
 
 ## Recommended IDE Setup
 
