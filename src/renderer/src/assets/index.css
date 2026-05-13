@@ -1,0 +1,298 @@
+/*
+ * Fonts — Inter loaded over the network.
+ * The renderer's CSP allows fonts.googleapis.com / fonts.gstatic.com
+ * (see index.html). In dev we rely on the dev server's default CSP.
+ * @import must precede other statements, so this block lives above @tailwind.
+ */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 47% 11%;
+
+    --primary: 222.2 47% 11%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47% 11%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47% 11%;
+
+    --destructive: 0 72% 45%;
+    --destructive-foreground: 210 40% 98%;
+
+    --warning: 35 92% 52%;
+    --warning-foreground: 40 80% 12%;
+
+    --success: 142 72% 36%;
+    --success-foreground: 142 60% 12%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 222.2 47% 6%;
+    --foreground: 210 40% 98%;
+
+    --card: 222.2 47% 8%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 47% 8%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47% 11%;
+
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 40%;
+    --destructive-foreground: 210 40% 98%;
+
+    --warning: 35 92% 52%;
+    --warning-foreground: 40 80% 88%;
+
+    --success: 142 72% 36%;
+    --success-foreground: 142 60% 88%;
+
+    --border: 217.2 32.6% 20%;
+    --input: 217.2 32.6% 20%;
+    --ring: 212.7 26.8% 83.9%;
+  }
+
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  /* Apply font smoothing at the root so every descendant inherits it — macOS
+     renders heavier than intended otherwise. Per the make-interfaces-feel-better
+     skill. */
+  html {
+    @apply antialiased;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family:
+      'Inter',
+      ui-sans-serif,
+      system-ui,
+      -apple-system,
+      'Segoe UI',
+      Roboto,
+      sans-serif;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+}
+
+@layer components {
+  .card-surface {
+    background: hsl(var(--card));
+    border-radius: var(--radius);
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.06),
+      0 1px 2px -1px rgba(0, 0, 0, 0.06),
+      0 2px 4px 0 rgba(0, 0, 0, 0.04);
+  }
+  .dark .card-surface {
+    /* Outline (with a negative offset so it sits just inside the rounded
+       edge) gives the dark-mode card a clean 1px border that follows
+       border-radius and is painted ABOVE descendants — unlike an inset
+       box-shadow, which child backgrounds paint over. This avoids the
+       old "1-pixel trap" where the table's <thead> bg-card masked the
+       card border at its top/left/right (including the rounded corners). */
+    outline: 1px solid hsl(var(--border));
+    outline-offset: -1px;
+  }
+
+  /* JS hook on the scrolling body-table wrapper. Kept as a class (rather than
+     inlined on the element) in case we want to animate header/body sync later;
+     no styles are required today. */
+  .table-scroll {
+    transition: none;
+  }
+  /* Stop the vertical scrollbar track from running into the card's bottom
+     border-radius and being clipped by the parent's overflow-hidden. A
+     margin-bottom on the track shortens where it renders without affecting
+     the scroll container's own layout. */
+  .table-scroll::-webkit-scrollbar-track {
+    margin-bottom: calc(var(--radius) / 2);
+  }
+
+  /*
+   * Window drag regions — only meaningful in Electron on macOS where the window
+   * is frameless (titleBarStyle: 'hiddenInset'). On Win/Linux the native title
+   * bar handles dragging, so these are harmless no-ops.
+   *
+   * Pattern mirrors Linear/Slack: anything inside `.app-drag` is a drag handle,
+   * but common interactive elements automatically opt out so clicks still land
+   * without having to sprinkle `no-drag` everywhere.
+   */
+  .app-drag {
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+  .app-drag button,
+  .app-drag a,
+  .app-drag input,
+  .app-drag select,
+  .app-drag textarea,
+  .app-drag label,
+  .app-drag [role='button'],
+  .app-drag [role='menuitem'],
+  .app-drag [role='menu'],
+  .app-drag [role='tab'],
+  .app-drag [role='switch'],
+  .app-drag [role='checkbox'],
+  .app-drag [role='combobox'],
+  .app-drag [data-no-drag],
+  .app-drag .no-drag {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+  .no-drag {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+}
+
+@layer utilities {
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
+  }
+}
+
+/* Drawer + popover motion — mirrors the prototype verbatim. */
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-enter {
+  animation: enter 160ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes drawer-left-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes drawer-left-out {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+@keyframes drawer-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes drawer-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+.drawer-content-left {
+  animation: drawer-left-in 320ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+.drawer-content-left-out {
+  animation: drawer-left-out 280ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+.drawer-overlay {
+  animation: drawer-fade-in 220ms ease-out both;
+}
+.drawer-overlay-out {
+  animation: drawer-fade-out 220ms ease-in both;
+}
+body.drawer-open {
+  overflow: hidden;
+}
+body.drawer-scale #root {
+  transform: scale(0.97);
+  transform-origin: 50% 0;
+  border-radius: 8px;
+  overflow: hidden;
+  transition: transform 320ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Row checkbox sizes sit a touch smaller than default */
+.checkbox-sm {
+  height: 14px;
+  width: 14px;
+  border-radius: 4px;
+}
+/* Shrink the hit-area pseudo-element inside dense rows so adjacent row
+   checkboxes don't have overlapping hit targets. Width stays close to the
+   cell's padded width; height is capped at the row height (~30px). */
+.checkbox-sm::after {
+  width: 36px;
+  height: 28px;
+}
+
+/* Scrollbar styling — keep Windows/Linux from getting the Chrome default grey */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 5px;
+  border: 2px solid hsl(var(--background));
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.4);
+}

@@ -1,0 +1,14 @@
+node_modules
+dist
+out
+build
+.DS_Store
+.eslintcache
+*.log*
+vitest.config.mts.timestamp-*.mjs
+*.tsbuildinfo
+coverage
+.env
+.env.local
+.env.*.local
+release/
