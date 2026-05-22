@@ -19,6 +19,14 @@ nsis:
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
 mac:
+  # Build both architectures so Intel Macs and Apple Silicon both get a
+  # native binary. Two separate DMGs (not a Universal build) keep the
+  # downloads small — each user fetches the one for their hardware.
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSCameraUsageDescription: Application requests access to the device's camera.
@@ -27,7 +35,9 @@ mac:
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
   notarize: false
 dmg:
-  artifactName: ${name}-${version}.${ext}
+  # `${arch}` is required now that we build both x64 and arm64 — without
+  # it both DMGs would collide on the same filename.
+  artifactName: ${name}-${version}-${arch}.${ext}
 linux:
   target:
     - AppImage
