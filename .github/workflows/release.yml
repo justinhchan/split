@@ -119,6 +119,15 @@ jobs:
   release:
     name: Update rolling release
     needs: build
+    # Publish even if one platform's build failed — partial assets are
+    # more useful than none. The default `needs:` gate treats any matrix
+    # leg failing as the whole `build` job failing and skips this one,
+    # but `fail-fast: false` already lets the other legs finish, so we
+    # may as well ship what we have. `!cancelled()` still skips on
+    # workflow cancellation. `softprops/action-gh-release`'s
+    # `fail_on_unmatched_files` below will fail the release loudly if
+    # every leg failed and there's nothing to publish.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
