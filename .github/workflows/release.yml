@@ -3,6 +3,12 @@ name: Build & release latest
 on:
   push:
     branches: [main]
+    # Don't burn ~10 min of CI on doc-only changes. Anything that affects
+    # the bundle (src, deps, electron-builder config, the workflow itself,
+    # icons/entitlements in `build/`) still triggers a build.
+    paths-ignore:
+      - '**/*.md'
+      - '.github/ISSUE_TEMPLATE/**'
   workflow_dispatch:
 
 # `contents: write` is required for the release job to delete + recreate the
@@ -45,7 +51,39 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm ci
+      # `setup-node`'s `cache: npm` only caches the registry tarballs.
+      # Caching the unpacked `node_modules` (and the native-deps rebuild
+      # that runs as `postinstall: electron-builder install-app-deps`)
+      # avoids ~60–90s of work per OS on a cache hit. Keyed on lockfile
+      # hash + OS + node version so cross-platform / lockfile changes
+      # invalidate cleanly.
+      - name: Cache node_modules
+        id: node-modules-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node22-${{ hashFiles('package-lock.json') }}
+
+      - name: Install dependencies
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: npm ci
+
+      # electron-builder downloads ~80MB of Electron binaries + helpers
+      # (dmg-license, appdmg, app-builder-bin, code-signing tools) into a
+      # platform-specific cache dir on first use. Persisting it cuts
+      # another ~30–60s per OS once warm. Keyed on the electron version
+      # we resolved in the lockfile so a dep bump invalidates correctly.
+      - name: Cache electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: eb-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - name: Build installer
         run: npm run ${{ matrix.build_script }}

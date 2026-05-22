@@ -1,7 +1,9 @@
 node_modules
 dist
 out
-build
+# `build/` here is electron-builder's `buildResources` input — entitlements
+# file + .icns/.ico/.png icons — not a build output. It must be tracked so
+# codesigning has the entitlements plist available in CI.
 .DS_Store
 .eslintcache
 *.log*
