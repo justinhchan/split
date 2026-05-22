@@ -15,18 +15,26 @@ import { FileUpload } from './components/FileUpload'
 import { TransactionsTable } from './components/TransactionsTable'
 import { ColumnMapperDialog } from './components/ColumnMapperDialog'
 import { SidebarDrawer, SidebarPane } from './components/SidebarDrawer'
-import { ThemeToggle } from './components/ThemeToggle'
+import { SettingsMenu } from './components/SettingsMenu'
 import { UndoToastHost } from './components/UndoToastHost'
 import { useTheme } from './hooks/useTheme'
 import { useAppStore } from './store/useAppStore'
 import { parseCSV, type DetectedColumns } from './lib/csv'
-import type { ColumnMap } from './store/types'
+import type { ColumnMap, Transaction } from './store/types'
+
+type IngestMode = 'replace' | 'append'
 
 interface MapperState {
   open: boolean
   csvText: string
   headers: string[]
   detected: DetectedColumns | null
+  mode: IngestMode
+}
+
+interface AppendDialogState {
+  open: boolean
+  csvText: string
 }
 
 // Detected once at module load — safe since platform can't change at runtime.
@@ -49,13 +57,31 @@ function App(): React.JSX.Element {
     open: false,
     csvText: '',
     headers: [],
-    detected: null
+    detected: null,
+    mode: 'replace'
   })
 
   const [resetOpen, setResetOpen] = useState(false)
+  const [appendDialog, setAppendDialog] = useState<AppendDialogState>({
+    open: false,
+    csvText: ''
+  })
+
+  const applyTransactions = useCallback(
+    (newTxs: Transaction[], map: ColumnMap | undefined, mode: IngestMode): void => {
+      // Append mode keeps the existing rows and appends the new ones. The column
+      // map only updates if we have a fresh one — otherwise the previously
+      // applied map stays in place. (The detector's per-signature cache covers
+      // the round-trip; this `setTransactions` call is just plumbing.)
+      const current = useAppStore.getState().transactions
+      const next = mode === 'append' ? [...current, ...newTxs] : newTxs
+      setTransactions(next, map)
+    },
+    [setTransactions]
+  )
 
   const ingestCSV = useCallback(
-    (text: string): void => {
+    (text: string, mode: IngestMode = 'replace'): void => {
       // Look at the cache first — if we've mapped this header shape before,
       // re-apply without bothering the user.
       const { transactions, detected, excludedCount, excludedTotal, ambiguous } = parseCSV(text)
@@ -63,7 +89,7 @@ function App(): React.JSX.Element {
       const cached = columnMapCache[detected.signature]
       if (cached) {
         const replay = parseCSV(text, cached)
-        setTransactions(replay.transactions, cached)
+        applyTransactions(replay.transactions, cached, mode)
         setImportBanner(
           replay.excludedCount > 0
             ? {
@@ -81,7 +107,8 @@ function App(): React.JSX.Element {
           open: true,
           csvText: text,
           headers: headersFromDetected(detected, text),
-          detected
+          detected,
+          mode
         })
         return
       }
@@ -95,14 +122,20 @@ function App(): React.JSX.Element {
         category: detected.category,
         headerSignature: detected.signature
       }
-      setTransactions(transactions, map)
+      applyTransactions(transactions, map, mode)
       cacheColumnMap(detected.signature, map)
       setImportBanner(
         excludedCount > 0 ? { excludedCount, excludedTotal, dismissed: false } : undefined
       )
     },
-    [columnMapCache, setTransactions, setImportBanner, cacheColumnMap]
+    [columnMapCache, applyTransactions, setImportBanner, cacheColumnMap]
   )
+
+  // Header loader: existing transactions are present, so route through the
+  // append/replace dialog instead of clobbering silently.
+  const handleHeaderLoad = useCallback((text: string): void => {
+    setAppendDialog({ open: true, csvText: text })
+  }, [])
 
   return (
     <TooltipProvider delayDuration={300} skipDelayDuration={150}>
@@ -128,19 +161,21 @@ function App(): React.JSX.Element {
 
           <div className="flex items-center gap-2">
             {transactions.length > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setResetOpen(true)}
-                aria-label="Clear all transactions"
-              >
-                <RotateCcw />
-                Clear
-              </Button>
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setResetOpen(true)}
+                  aria-label="Clear all transactions"
+                >
+                  <RotateCcw />
+                  Clear
+                </Button>
+                <FileUpload compact onFile={handleHeaderLoad} />
+              </>
             )}
 
-            <FileUpload compact onFile={(text) => ingestCSV(text)} />
-            <ThemeToggle />
+            <SettingsMenu />
           </div>
         </header>
 
@@ -165,7 +200,7 @@ function App(): React.JSX.Element {
           headers={mapper.headers}
           initialDetected={mapper.detected}
           onConfirm={(txs, map, excluded) => {
-            setTransactions(txs, map)
+            applyTransactions(txs, map, mapper.mode)
             cacheColumnMap(map.headerSignature ?? computeSignatureFromHeaders(mapper.headers), map)
             setImportBanner(
               excluded.count > 0
@@ -178,6 +213,51 @@ function App(): React.JSX.Element {
         {/* Single-slot undo toast (currently only delete uses it). Sits above
             BulkTagBar at bottom-20 so the two never overlap. */}
         <UndoToastHost />
+
+        {/* Loaded a second CSV with existing transactions on screen — ask
+          whether to add the new rows to the current set or start over. People
+          are preserved either way; only Replace clears the existing rows. */}
+        <Dialog
+          open={appendDialog.open}
+          onOpenChange={(o) => setAppendDialog((prev) => ({ ...prev, open: o }))}
+        >
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Add to the current transactions?</DialogTitle>
+              <DialogDescription>
+                You already have transactions loaded. Append the new ones to keep both, or replace
+                to start fresh. People stay either way.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                variant="ghost"
+                onClick={() => setAppendDialog({ open: false, csvText: '' })}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  const text = appendDialog.csvText
+                  setAppendDialog({ open: false, csvText: '' })
+                  ingestCSV(text, 'replace')
+                }}
+              >
+                Replace
+              </Button>
+              <Button
+                onClick={() => {
+                  const text = appendDialog.csvText
+                  setAppendDialog({ open: false, csvText: '' })
+                  ingestCSV(text, 'append')
+                }}
+              >
+                Append
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Reset confirmation. People are preserved (they're often reused
           across imports); only transactions, column map, and the import

@@ -1,14 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, ArrowDownUp } from 'lucide-react'
 import { Button } from './ui/button'
 import { Checkbox } from './ui/checkbox'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from './ui/dropdown-menu'
 import { TransactionRow } from './TransactionRow'
 import { ColumnsMenu } from './ColumnsMenu'
 import { BulkTagBar, BULK_TAG_BAR_TRANSITION } from './BulkTagBar'
 import { ImportBanner } from './ImportBanner'
 import { useAppStore, DEFAULT_COL_WIDTHS } from '../store/useAppStore'
 import type { SortableKey } from '../store/types'
-import { computeAutoVisibleCols, computeEffectiveVisibleCols } from '../lib/columns'
+import {
+  computeAutoVisibleCols,
+  computeEffectiveVisibleCols,
+  computeAmountColWidth,
+  computeTagsColWidth,
+  isCardLayout
+} from '../lib/columns'
 import { useContainerWidth } from '../hooks/useContainerWidth'
 import { cn } from '../lib/utils'
 
@@ -30,6 +44,11 @@ export function TransactionsTable(): JSX.Element {
     () => computeEffectiveVisibleCols(userVisibleCols, autoVisibleCols),
     [userVisibleCols, autoVisibleCols]
   )
+  // Below the card-mode breakpoint we abandon the tabular layout entirely.
+  // table-fixed widths can't shrink Description below ~10 px without clipping
+  // it; cards give Description full width and inline metadata + tag dots
+  // beneath, the same pattern Linear/Gmail/GitHub use on mobile.
+  const cardMode = isCardLayout(containerWidth)
   // Columns the user wanted but the responsive layer hid. These get inlined
   // as a muted second line under Description so the data is never lost.
   // Category is permanently inlined and isn't tracked here.
@@ -105,6 +124,20 @@ export function TransactionsTable(): JSX.Element {
     })
   }
 
+  // Amount column sizes to the widest formatted value in the visible rows so
+  // $100,000,000.00 fits without truncating but a list of single-dollar splits
+  // doesn't reserve dead space. Re-computed only when the transactions change,
+  // not on every sort/selection update.
+  const amountColWidth = useMemo(
+    () => computeAmountColWidth(transactions.map((t) => t.amount)),
+    [transactions]
+  )
+
+  // Tags column sizes to the widest single chip + kebab so Description gets
+  // the rest of the horizontal space. The chip flow inside the cell still
+  // wraps when a row has more tags than fit on one line.
+  const tagsColWidth = useMemo(() => computeTagsColWidth(people), [people])
+
   // Colgroup shared by header + body so columns line up across the two tables.
   // Description is intentionally the only column without an explicit width:
   // under `table-fixed` it becomes the flex column that absorbs slack when
@@ -119,8 +152,8 @@ export function TransactionsTable(): JSX.Element {
       <col style={{ width: 40 }} />
       {visibleCols.date && <col style={{ width: DEFAULT_COL_WIDTHS.date }} />}
       {visibleCols.description && <col />}
-      {visibleCols.amount && <col style={{ width: DEFAULT_COL_WIDTHS.amount }} />}
-      {visibleCols.tags && <col style={{ width: DEFAULT_COL_WIDTHS.tags }} />}
+      {visibleCols.amount && <col style={{ width: amountColWidth }} />}
+      {visibleCols.tags && <col style={{ width: tagsColWidth }} />}
     </colgroup>
   )
 
@@ -139,7 +172,10 @@ export function TransactionsTable(): JSX.Element {
           Transactions <span className="ml-1">({transactions.length})</span>
         </h2>
         <div className="flex items-center gap-2">
-          <ColumnsMenu autoVisibleCols={autoVisibleCols} />
+          {/* Column visibility doesn't apply in card mode — every field is
+              shown on the card already. Hide the menu to avoid a confusing
+              no-op trigger. */}
+          {!cardMode && <ColumnsMenu autoVisibleCols={autoVisibleCols} />}
         </div>
       </div>
 
@@ -150,6 +186,38 @@ export function TransactionsTable(): JSX.Element {
           <div className="flex flex-1 items-center justify-center p-10 text-sm text-muted-foreground text-pretty">
             Upload a CSV to get started. Columns are detected automatically.
           </div>
+        ) : cardMode ? (
+          // Mobile / narrow layout. No header table — sorting moves into a
+          // compact bar above the list so users can still re-order by Date /
+          // Description / Amount without the column-cycle affordance.
+          <>
+            <CardSortBar
+              sort={sort}
+              allChecked={allChecked}
+              someChecked={someChecked}
+              onToggleAll={toggleAll}
+              hasTransactions={transactions.length > 0}
+            />
+            <div
+              className="table-scroll flex min-h-0 flex-1 flex-col overflow-auto pb-3"
+              role="list"
+              aria-label="Transactions"
+            >
+              {sortedTransactions.map((tx) => (
+                <TransactionRow
+                  key={tx.id}
+                  tx={tx}
+                  peopleById={peopleById}
+                  selected={selectedIds.has(tx.id)}
+                  onToggleSelect={() => toggleOne(tx.id)}
+                  selectedIds={selectedIds}
+                  visibleCols={visibleCols}
+                  shedCols={shedCols}
+                  layout="card"
+                />
+              ))}
+            </div>
+          </>
         ) : (
           <>
             {/* Header — non-scrolling. `scrollbar-gutter: stable` keeps columns
@@ -158,7 +226,7 @@ export function TransactionsTable(): JSX.Element {
                 gutter strip too — otherwise there's a 1-cell gap on the right
                 between the rightmost cell and the card edge. */}
             <div
-              className="overflow-hidden border-b border-border"
+              className="overflow-hidden border-b border-border dark:border-t"
               style={{ scrollbarGutter: 'stable' }}
             >
               <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
@@ -279,6 +347,95 @@ function HeaderCell({ label, sortKey, sort, onSort, alignRight }: HeaderCellProp
         )}
       </div>
     </th>
+  )
+}
+
+interface CardSortBarProps {
+  sort: { key: SortableKey | null; dir: 'asc' | 'desc' }
+  allChecked: boolean
+  someChecked: boolean
+  onToggleAll: () => void
+  hasTransactions: boolean
+}
+
+const SORT_LABELS: Record<SortableKey, string> = {
+  date: 'Date',
+  description: 'Description',
+  amount: 'Amount'
+}
+
+/**
+ * Compact replacement for the column-header sort affordance in card mode.
+ * Select-all checkbox on the left, a single "Sort by …" dropdown on the
+ * right. The dropdown mirrors how Things 3, Apple Notes, and Linear handle
+ * sort on mobile: name the field + direction explicitly rather than asking
+ * users to cycle through a tristate by tapping the same surface twice.
+ */
+function CardSortBar({
+  sort,
+  allChecked,
+  someChecked,
+  onToggleAll,
+  hasTransactions
+}: CardSortBarProps): JSX.Element {
+  const setSortDir = useAppStore((s) => s.setSortDir)
+  const setSort = useAppStore((s) => s.setSort)
+
+  const activeLabel = sort.key
+    ? `${SORT_LABELS[sort.key]} ${sort.dir === 'asc' ? '↑' : '↓'}`
+    : 'Sort'
+  return (
+    <div className="flex items-center justify-between border-b border-border bg-card px-3 py-2 dark:border-t">
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Checkbox
+          checked={allChecked}
+          indeterminate={someChecked}
+          onCheckedChange={() => onToggleAll()}
+          aria-label="Select all"
+          className="checkbox-sm"
+          disabled={!hasTransactions}
+        />
+        <span>Select all</span>
+      </label>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="xs" className="gap-1.5">
+            {sort.key ? <ArrowDownUp className="h-3 w-3" /> : <ArrowUpDown className="h-3 w-3" />}
+            <span>{activeLabel}</span>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-[12rem]">
+          <DropdownMenuLabel>Sort by</DropdownMenuLabel>
+          {(['date', 'description', 'amount'] as SortableKey[]).map((key) => (
+            <div key={key}>
+              <DropdownMenuItem onSelect={() => setSortDir(key, 'asc')}>
+                <ArrowUp />
+                <span>{SORT_LABELS[key]} ascending</span>
+                {sort.key === key && sort.dir === 'asc' && (
+                  <span className="ml-auto text-xs text-muted-foreground" aria-hidden="true">
+                    ✓
+                  </span>
+                )}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setSortDir(key, 'desc')}>
+                <ArrowDown />
+                <span>{SORT_LABELS[key]} descending</span>
+                {sort.key === key && sort.dir === 'desc' && (
+                  <span className="ml-auto text-xs text-muted-foreground" aria-hidden="true">
+                    ✓
+                  </span>
+                )}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </div>
+          ))}
+          <DropdownMenuItem onSelect={() => setSort(null)} disabled={sort.key === null}>
+            <ArrowUpDown />
+            <span>No sort</span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   )
 }
 

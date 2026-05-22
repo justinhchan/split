@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
 import { colorForIndex } from '../lib/colors'
 import { loadState, saveState } from '../lib/ipc'
+import { pack, safeUnpack } from '../lib/packPersisted'
 import {
   DEFAULT_COL_WIDTHS,
   DEFAULT_VISIBLE_COLS,
@@ -61,36 +62,65 @@ interface AppActions {
   // Theme
   setTheme: (theme: Theme) => void
 
+  // Persistence
+  setPersistenceEnabled: (enabled: boolean) => void
+
   // Sidebar
   setSidebarOpen: (open: boolean) => void
 
   // Table UI
   setSort: (key: SortableKey | null) => void
+  /** Explicit (key, dir) setter for the card-layout sort dropdown — the
+   *  asc → desc → cleared cycle that `cycleSort` does doesn't fit a list of
+   *  named choices ("Date ascending", "Amount descending"). */
+  setSortDir: (key: SortableKey, dir: 'asc' | 'desc') => void
   cycleSort: (key: SortableKey) => void
   setColumnVisible: (key: ColumnKey, visible: boolean) => void
 }
 
 type Store = PersistedState & AppActions & { _hydrated: boolean }
 
-/** Debounced sync of the persistent slice to electron-store. */
+/** Debounced sync of the persistent slice to electron-store. The state is
+ *  packed (short keys, falsy-stripped, transient fields dropped — see
+ *  `lib/packPersisted.ts`) before crossing the IPC boundary so on-disk and
+ *  localStorage payloads stay compact. */
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 function scheduleSave(state: PersistedState): void {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
-    saveState({ version: 1, data: state as unknown as Record<string, unknown> }).catch(() => {})
+    const packed = pack(state) as unknown as Record<string, unknown>
+    saveState({ version: 2, data: packed }).catch(() => {})
   }, 300)
 }
 
 function pickPersistent(s: Store): PersistedState {
+  // When "Remember session" is off, write only the settings that are always
+  // safe to keep on disk (theme + the flag itself). Session data is replaced
+  // with INITIAL_STATE defaults, which has the side-effect of wiping any
+  // previously-saved people/transactions/etc. on the next debounced write.
+  if (!s.persistenceEnabled) {
+    return {
+      ...INITIAL_STATE,
+      theme: s.theme,
+      persistenceEnabled: false
+    }
+  }
   return {
     people: s.people,
     transactions: s.transactions,
     theme: s.theme,
     columnMap: s.columnMap,
     tableUI: s.tableUI,
-    sidebarOpen: s.sidebarOpen,
+    // `sidebarOpen` is never written to disk — hydrate forces it false on
+    // mount anyway (see the "avoid the backdrop-on-load trap" note below),
+    // so persisting it would only ever cost bytes without affecting boot.
+    sidebarOpen: false,
     columnMapCache: s.columnMapCache,
-    importBanner: s.importBanner
+    // Dismissed banners contribute no signal on next launch. Pack will drop
+    // the field entirely; this just makes the in-memory pre-pack snapshot
+    // line up with what gets written.
+    importBanner: s.importBanner?.dismissed ? undefined : s.importBanner,
+    persistenceEnabled: true
   }
 }
 
@@ -140,7 +170,16 @@ export const useAppStore = create<Store>()(
     hydrate: async () => {
       try {
         const payload = await loadState()
-        const data = (payload.data ?? {}) as Partial<PersistedState>
+        // v2 payloads use packed short keys (lib/packPersisted.ts) — `safeUnpack`
+        // validates with Valibot and fills in INITIAL_STATE defaults for any
+        // missing/invalid field, so the store never sees garbage (e.g. a
+        // missing `pe` silently flipping persistence off). v1 payloads
+        // (pre-pack) keep their verbose keys and pass through; the existing
+        // legacy-shape handling below still defends them.
+        const data: Partial<PersistedState> =
+          payload.version === 2
+            ? safeUnpack(payload.data)
+            : (payload.data as Partial<PersistedState>)
         // Strip legacy keys before they leak back into the typed state.
         // Category used to be a real column — pre-existing on-disk state can
         // still carry `visibleCols.category` and `sort.key === 'category'`,
@@ -335,12 +374,19 @@ export const useAppStore = create<Store>()(
     // Theme ---------------------------------------------------------------
     setTheme: (theme) => set({ theme }),
 
+    // Persistence --------------------------------------------------------
+    setPersistenceEnabled: (enabled) => set({ persistenceEnabled: enabled }),
+
     // Sidebar -------------------------------------------------------------
     setSidebarOpen: (open) => set({ sidebarOpen: open }),
 
     // Table UI ------------------------------------------------------------
     setSort: (key) => {
       set({ tableUI: { ...get().tableUI, sort: { key, dir: 'asc' } } })
+    },
+
+    setSortDir: (key, dir) => {
+      set({ tableUI: { ...get().tableUI, sort: { key, dir } } })
     },
 
     cycleSort: (key) => {

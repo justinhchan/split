@@ -12,13 +12,14 @@ export interface UndoToast {
   id: number
   message: string
   /** Called when the user clicks the "Undo" affordance. The host dismisses
-   *  the toast immediately after. */
-  undo: () => void
+   *  the toast immediately after. Optional — feedback-only toasts (e.g.
+   *  "Tagged with Player 2") pass undefined and the Undo button is hidden. */
+  undo?: () => void
 }
 
 interface UndoToastState {
   current: UndoToast | null
-  show: (message: string, undo: () => void) => void
+  show: (message: string, undo?: () => void) => void
   dismiss: () => void
 }
 

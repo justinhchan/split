@@ -35,18 +35,20 @@ export function UndoToastHost(): JSX.Element | null {
         className="pointer-events-auto flex items-center gap-2 rounded-2xl bg-popover px-3 py-2 text-sm shadow-lg ring-1 ring-border animate-enter"
       >
         <span className="text-popover-foreground">{current.message}</span>
-        <Button
-          variant="ghost"
-          size="xs"
-          onClick={() => {
-            current.undo()
-            dismiss()
-          }}
-          aria-label="Undo"
-        >
-          <Undo2 />
-          <span>Undo</span>
-        </Button>
+        {current.undo && (
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => {
+              current.undo?.()
+              dismiss()
+            }}
+            aria-label="Undo"
+          >
+            <Undo2 />
+            <span>Undo</span>
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon"

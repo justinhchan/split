@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Users, X } from 'lucide-react'
+import { Trash2, Users, X } from 'lucide-react'
 import { Button } from './ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { ExcludeToggle } from './ExcludeToggle'
 import { useAppStore } from '../store/useAppStore'
+import { useUndoToast } from '../store/useUndoToast'
 import type { PersonId } from '../store/types'
 import { deriveSelectionState, type SelectionState, type TriState } from '../lib/selection'
+import { formatCurrency } from '../lib/format'
 import { cn } from '../lib/utils'
 
 export interface BulkTagBarProps {
@@ -44,6 +46,9 @@ export function BulkTagBar({ selectedIds, onClear, onHeightChange }: BulkTagBarP
   const setTags = useAppStore((s) => s.setTagsForSelection)
   const clearTags = useAppStore((s) => s.clearTagsForSelection)
   const setExcluded = useAppStore((s) => s.setExcludedForSelection)
+  const deleteRows = useAppStore((s) => s.deleteTransactionsForSelection)
+  const restoreRows = useAppStore((s) => s.restoreTransactions)
+  const showToast = useUndoToast((s) => s.show)
 
   const count = selectedIds.length
   const visible = count > 0
@@ -53,18 +58,30 @@ export function BulkTagBar({ selectedIds, onClear, onHeightChange }: BulkTagBarP
     [selectedIds, transactions, people]
   )
 
+  const liveSum = useMemo(() => {
+    if (selectedIds.length === 0) return 0
+    const idSet = new Set(selectedIds)
+    let total = 0
+    for (const t of transactions) {
+      if (idSet.has(t.id)) total += t.amount
+    }
+    return total
+  }, [selectedIds, transactions])
+
   // Snapshot the rendered state while the selection is non-empty so the bar
   // keeps showing the previous content while it slides away. Without this,
   // dropping the selection visibly flips all chips to `none` mid-exit.
-  const [snapshot, setSnapshot] = useState<{ count: number; state: SelectionState }>(() => ({
-    count: 0,
-    state: EMPTY_STATE
-  }))
+  const [snapshot, setSnapshot] = useState<{
+    count: number
+    sum: number
+    state: SelectionState
+  }>(() => ({ count: 0, sum: 0, state: EMPTY_STATE }))
   useEffect(() => {
-    if (visible) setSnapshot({ count, state: liveState })
-  }, [visible, count, liveState])
+    if (visible) setSnapshot({ count, sum: liveSum, state: liveState })
+  }, [visible, count, liveSum, liveState])
 
   const displayCount = visible ? count : snapshot.count
+  const displaySum = visible ? liveSum : snapshot.sum
   const { anyIncluded, anyExcluded, tagStates, everyoneState } = visible
     ? liveState
     : snapshot.state
@@ -111,6 +128,13 @@ export function BulkTagBar({ selectedIds, onClear, onHeightChange }: BulkTagBarP
     if (everyoneState === 'all') clearTags(selectedIds)
     else setTags(selectedIds, allPersonIds)
   }
+  const handleDelete = (): void => {
+    const entries = deleteRows(selectedIds)
+    if (entries.length === 0) return
+    const message = entries.length === 1 ? 'Deleted 1 row' : `Deleted ${entries.length} rows`
+    showToast(message, () => restoreRows(entries))
+    onClear()
+  }
 
   return (
     <div
@@ -153,9 +177,12 @@ export function BulkTagBar({ selectedIds, onClear, onHeightChange }: BulkTagBarP
           </Tooltip>
           <span
             aria-live="polite"
-            className="px-1 text-xs font-medium tracking-wide text-muted-foreground"
+            className="flex items-baseline gap-1.5 px-1 text-xs font-medium tracking-wide text-muted-foreground"
           >
-            {displayCount} selected
+            <span>{displayCount} selected</span>
+            {displayCount > 1 && (
+              <span className="tabular-nums text-foreground">{formatCurrency(displaySum)}</span>
+            )}
           </span>
         </div>
 
@@ -256,14 +283,36 @@ export function BulkTagBar({ selectedIds, onClear, onHeightChange }: BulkTagBarP
         {/* Trailing actions wrap as a single unit so individual buttons can't
             be orphaned onto their own line at narrow widths. */}
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="xs" onClick={() => clearTags(selectedIds)}>
-            Clear tags
-          </Button>
+          {/* Clear tags is only meaningful when the selection has at least
+              one tag somewhere. Otherwise the tap does nothing and the toast
+              feedback ("Cleared tags") would be a lie. Same self-hiding rule
+              the rest of the bulk bar already follows. */}
+          {everyoneState !== 'none' && (
+            <Button variant="ghost" size="xs" onClick={() => clearTags(selectedIds)}>
+              Clear tags
+            </Button>
+          )}
           <ExcludeToggle
             anyIncluded={anyIncluded}
             anyExcluded={anyExcluded}
             onToggle={(excluded) => setExcluded(selectedIds, excluded)}
           />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                onClick={handleDelete}
+                aria-label={displayCount === 1 ? 'Delete row' : `Delete ${displayCount} rows`}
+              >
+                <Trash2 />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {displayCount === 1 ? 'Delete row' : `Delete ${displayCount} rows`}
+            </TooltipContent>
+          </Tooltip>
         </div>
       </div>
     </div>

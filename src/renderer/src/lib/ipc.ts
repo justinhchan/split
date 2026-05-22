@@ -4,7 +4,7 @@
  */
 
 export interface PersistedPayload {
-  version: 1
+  version: 1 | 2
   data: Record<string, unknown>
 }
 
@@ -18,12 +18,12 @@ export async function loadState(): Promise<PersistedPayload> {
   if (hasApi()) return window.api.loadState()
   try {
     const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LS_KEY) : null
-    if (!raw) return { version: 1, data: {} }
+    if (!raw) return { version: 2, data: {} }
     const parsed = JSON.parse(raw) as PersistedPayload
-    if (typeof parsed?.version !== 'number') return { version: 1, data: {} }
+    if (typeof parsed?.version !== 'number') return { version: 2, data: {} }
     return parsed
   } catch {
-    return { version: 1, data: {} }
+    return { version: 2, data: {} }
   }
 }
 

@@ -56,23 +56,25 @@ export interface PersistedState {
     excludedTotal: number
     dismissed: boolean
   }
+  /** When false, every save flushes a minimal payload — theme + this flag —
+   *  so session data (people, transactions, table UI) never lands on disk.
+   *  The flag itself always persists so the user's choice survives a relaunch.
+   *  Defaults to true to keep existing on-disk state behaving as before. */
+  persistenceEnabled: boolean
 }
 
 /** Fixed widths for the colgroup shared by header + body tables. Columns are
  *  no longer user-resizable, but the `table-fixed` layout still needs concrete
  *  widths so header and body stay aligned with each other.
  *
- *  Description has no entry here — it's the flex column that absorbs
- *  remaining horizontal space. The responsive layer in `lib/columns.ts`
- *  guarantees Description never falls below a usable width by auto-shedding
- *  Date first. */
-export const DEFAULT_COL_WIDTHS: Record<'date' | 'amount' | 'tags', number> = {
-  date: 80,
-  amount: 110,
-  // Tags is wide enough to comfortably fit 3 short chips on one line; the
-  // typical bill-split has 2–4 taggees, so this is the common case. Description
-  // remains the flex column and absorbs whatever's left after the fixed columns.
-  tags: 240
+ *  Only Date is static here. Description is the flex column (absorbs
+ *  whatever's left); Amount and Tags both size dynamically in
+ *  `lib/columns.ts` (`computeAmountColWidth`, `computeTagsColWidth`) so
+ *  Description always gets the most horizontal space without those columns
+ *  reserving dead width for small values or short rosters.
+ */
+export const DEFAULT_COL_WIDTHS: Record<'date', number> = {
+  date: 80
 }
 
 export const DEFAULT_VISIBLE_COLS: Record<ColumnKey, boolean> = {
@@ -91,5 +93,6 @@ export const INITIAL_STATE: PersistedState = {
     visibleCols: { ...DEFAULT_VISIBLE_COLS }
   },
   sidebarOpen: false,
-  columnMapCache: {}
+  columnMapCache: {},
+  persistenceEnabled: true
 }

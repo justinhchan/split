@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
 export interface PersistedPayload {
-  version: 1
+  version: 1 | 2
   data: Record<string, unknown>
 }
 

@@ -2,34 +2,31 @@ import { useMemo, useRef } from 'react'
 import {
   Check,
   DollarSign,
+  Eraser,
   Eye,
   EyeOff,
   Minus,
   MoreHorizontal,
   Pencil,
   Receipt,
-  Tag,
   Trash2,
+  UserPlus,
   Users
 } from 'lucide-react'
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuLabel,
   ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
   ContextMenuTrigger
 } from './ui/context-menu'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger
 } from './ui/dropdown-menu'
 import { useAppStore } from '../store/useAppStore'
@@ -44,26 +41,20 @@ import type { Person, PersonId, Transaction } from '../store/types'
  *  enough to accept both without parametric type gymnastics. */
 interface MenuKit {
   Item: React.ElementType
+  Label: React.ElementType
   Separator: React.ElementType
-  Sub: React.ElementType
-  SubTrigger: React.ElementType
-  SubContent: React.ElementType
 }
 
 const ContextMenuKit: MenuKit = {
   Item: ContextMenuItem,
-  Separator: ContextMenuSeparator,
-  Sub: ContextMenuSub,
-  SubTrigger: ContextMenuSubTrigger,
-  SubContent: ContextMenuSubContent
+  Label: ContextMenuLabel,
+  Separator: ContextMenuSeparator
 }
 
 const DropdownMenuKit: MenuKit = {
   Item: DropdownMenuItem,
-  Separator: DropdownMenuSeparator,
-  Sub: DropdownMenuSub,
-  SubTrigger: DropdownMenuSubTrigger,
-  SubContent: DropdownMenuSubContent
+  Label: DropdownMenuLabel,
+  Separator: DropdownMenuSeparator
 }
 
 export interface RowMenuProps {
@@ -90,9 +81,13 @@ interface RowMenuLogic {
   anyExcluded: boolean
   handlePersonClick: (personId: PersonId, state: TriState) => void
   handleEveryoneClick: () => void
+  handleClearTags: () => void
   handleSetPayment: () => void
   handleSetExcluded: () => void
   handleDelete: () => void
+  /** Empty-state shortcut: creates the next auto-named person ("Player 1",
+   *  "Player 2", …) and tags them on the target rows in a single click. */
+  handleAddPersonAndTag: () => void
 }
 
 /** All the derivations + bound handlers the items need. Lifting these into a
@@ -110,6 +105,7 @@ function useRowMenuLogic(tx: Transaction, selectedIds: Set<string>): RowMenuLogi
   const setPayment = useAppStore((s) => s.setPaymentForSelection)
   const deleteRows = useAppStore((s) => s.deleteTransactionsForSelection)
   const restoreRows = useAppStore((s) => s.restoreTransactions)
+  const addPerson = useAppStore((s) => s.addPerson)
   const showToast = useUndoToast((s) => s.show)
 
   // Single-row when the right-clicked row isn't in the current selection, or
@@ -145,22 +141,62 @@ function useRowMenuLogic(tx: Transaction, selectedIds: Set<string>): RowMenuLogi
   const willExclude = anyIncluded
   const willMarkPayment = !allPayment
 
+  // Phrase that ties bulk-vs-single feedback messages together so the toast
+  // copy stays consistent without each handler reinventing the suffix.
+  const rowsLabel = bulk ? `${count} rows` : '1 row'
+
   // Tag-click semantics: tri-state aware so a single click always funnels the
   // selection toward a consistent state instead of inverting per-row.
   //   all     → remove the person from every target
   //   partial → add the person to every target the person is missing from
   //   none    → add the person to every target
   const handlePersonClick = (personId: PersonId, state: TriState): void => {
-    if (state === 'all') removeTag(targetIds, personId)
-    else addTag(targetIds, personId)
+    const name = people.find((p) => p.id === personId)?.name ?? 'person'
+    if (state === 'all') {
+      removeTag(targetIds, personId)
+      showToast(bulk ? `Untagged ${name} from ${rowsLabel}` : `Untagged ${name}`)
+    } else {
+      addTag(targetIds, personId)
+      showToast(bulk ? `Tagged ${rowsLabel} with ${name}` : `Tagged with ${name}`)
+    }
   }
   const handleEveryoneClick = (): void => {
-    if (everyoneState === 'all') clearTags(targetIds)
-    else
+    if (everyoneState === 'all') {
+      clearTags(targetIds)
+      showToast(bulk ? `Cleared tags on ${rowsLabel}` : 'Cleared tags')
+    } else {
       setTags(
         targetIds,
         people.map((p) => p.id)
       )
+      showToast(bulk ? `Tagged ${rowsLabel} with everyone` : 'Tagged with everyone')
+    }
+  }
+  const handleClearTags = (): void => {
+    clearTags(targetIds)
+    showToast(bulk ? `Cleared tags on ${rowsLabel}` : 'Cleared tags')
+  }
+  const handleSetPayment = (): void => {
+    setPayment(targetIds, willMarkPayment)
+    const msg = willMarkPayment
+      ? bulk
+        ? `Marked ${count} as payment`
+        : 'Marked as payment'
+      : bulk
+        ? `Unmarked ${count} as payment`
+        : 'Unmarked payment'
+    showToast(msg)
+  }
+  const handleSetExcluded = (): void => {
+    setExcluded(targetIds, willExclude)
+    const msg = willExclude
+      ? bulk
+        ? `Excluded ${count} from totals`
+        : 'Excluded from totals'
+      : bulk
+        ? `Included ${count} in totals`
+        : 'Included in totals'
+    showToast(msg)
   }
 
   const handleDelete = (): void => {
@@ -168,6 +204,12 @@ function useRowMenuLogic(tx: Transaction, selectedIds: Set<string>): RowMenuLogi
     if (entries.length === 0) return
     const message = entries.length === 1 ? 'Deleted 1 row' : `Deleted ${entries.length} rows`
     showToast(message, () => restoreRows(entries))
+  }
+
+  const handleAddPersonAndTag = (): void => {
+    const person = addPerson()
+    addTag(targetIds, person.id)
+    showToast(bulk ? `Tagged ${rowsLabel} with ${person.name}` : `Tagged with ${person.name}`)
   }
 
   return {
@@ -182,9 +224,11 @@ function useRowMenuLogic(tx: Transaction, selectedIds: Set<string>): RowMenuLogi
     anyExcluded,
     handlePersonClick,
     handleEveryoneClick,
-    handleSetPayment: () => setPayment(targetIds, willMarkPayment),
-    handleSetExcluded: () => setExcluded(targetIds, willExclude),
-    handleDelete
+    handleClearTags,
+    handleSetPayment,
+    handleSetExcluded,
+    handleDelete,
+    handleAddPersonAndTag
   }
 }
 
@@ -213,9 +257,11 @@ function RowMenuItems({
   willMarkPayment,
   handlePersonClick,
   handleEveryoneClick,
+  handleClearTags,
   handleSetPayment,
   handleSetExcluded,
   handleDelete,
+  handleAddPersonAndTag,
   onStartEditDescription,
   onStartEditAmount
 }: RowMenuItemsProps): JSX.Element {
@@ -261,44 +307,50 @@ function RowMenuItems({
 
       <M.Separator />
 
-      {/* Tag submenu — single source of truth for tagging now that the inline
-          Tag button is gone. Disabled when no people exist yet so the user
-          can see the action and where it lives, even if it can't fire. */}
-      <M.Sub>
-        <M.SubTrigger disabled={people.length === 0}>
-          <Tag />
-          <span>{bulk ? `Tag ${count} rows` : 'Tag people'}</span>
-        </M.SubTrigger>
-        <M.SubContent className="min-w-[12rem]">
-          {people.length === 0 ? (
-            <div className="px-2 py-1.5 text-xs text-muted-foreground">
-              Add a person in the sidebar first.
-            </div>
-          ) : (
-            <>
-              {people.map((p) => renderPersonItem(p, tagStates[p.id] ?? 'none'))}
-              {people.length >= 2 && (
-                <>
-                  <M.Separator />
-                  <M.Item
-                    onSelect={(event: Event) => {
-                      event.preventDefault()
-                      handleEveryoneClick()
-                    }}
-                  >
-                    <span className="flex h-3.5 w-3.5 items-center justify-center">
-                      {everyoneState === 'all' && <Check className="h-3.5 w-3.5" />}
-                      {everyoneState === 'partial' && <Minus className="h-3.5 w-3.5" />}
-                    </span>
-                    <Users />
-                    <span>Everyone</span>
-                  </M.Item>
-                </>
-              )}
-            </>
+      {/* Tag options inline (no submenu). Submenus open on hover or
+          pointermove — neither is reliable on touch, where a fast tap-and-
+          release never opens them. Flattening makes every tag option a direct
+          tap; tri-state indicator on the left still shows partial coverage. */}
+      {people.length > 0 ? (
+        <>
+          <M.Label>{bulk ? `Tag ${count} rows` : 'Tag people'}</M.Label>
+          {people.map((p) => renderPersonItem(p, tagStates[p.id] ?? 'none'))}
+          {people.length >= 2 && (
+            <M.Item
+              onSelect={(event: Event) => {
+                event.preventDefault()
+                handleEveryoneClick()
+              }}
+            >
+              <span className="flex h-3.5 w-3.5 items-center justify-center">
+                {everyoneState === 'all' && <Check className="h-3.5 w-3.5" />}
+                {everyoneState === 'partial' && <Minus className="h-3.5 w-3.5" />}
+              </span>
+              <Users />
+              <span>Everyone</span>
+            </M.Item>
           )}
-        </M.SubContent>
-      </M.Sub>
+          <M.Item onSelect={handleClearTags} disabled={everyoneState === 'none'}>
+            <span className="flex h-3.5 w-3.5 items-center justify-center" />
+            <Eraser />
+            <span>Clear tags</span>
+          </M.Item>
+          <M.Separator />
+        </>
+      ) : (
+        <>
+          <M.Label>Tag people</M.Label>
+          {/* No people yet — collapse the empty hint + "open sidebar, add a
+              person, come back" detour into a single action. Creates the next
+              auto-named "Player N" and tags them on the target rows. The user
+              can still rename in the sidebar afterwards. */}
+          <M.Item onSelect={handleAddPersonAndTag}>
+            <UserPlus />
+            <span>{bulk ? `Add a person and tag ${count} rows` : 'Add a person and tag'}</span>
+          </M.Item>
+          <M.Separator />
+        </>
+      )}
 
       <M.Item onSelect={handleSetPayment}>
         <Receipt />
@@ -411,13 +463,18 @@ export function TransactionRowMenu({
  *  right-click, and a Linear-style permanent action surface for keyboard
  *  navigation (tabbing onto the button + Enter opens it). Hover-reveal
  *  styling matches the old Tag button so the row's resting state stays
- *  clean. */
+ *  clean.
+ *
+ *  Pass `alwaysVisible` on touch surfaces (card layout, mobile) where there's
+ *  no hover state to reveal the button — otherwise the kebab is permanently
+ *  invisible and the row has no obvious affordance. */
 export function TransactionRowActionsButton({
   tx,
   selectedIds,
   onStartEditDescription,
-  onStartEditAmount
-}: RowMenuProps): JSX.Element {
+  onStartEditAmount,
+  alwaysVisible = false
+}: RowMenuProps & { alwaysVisible?: boolean }): JSX.Element {
   const logic = useRowMenuLogic(tx, selectedIds)
   const gate = useEditFocusGate(onStartEditDescription, onStartEditAmount)
   return (
@@ -425,7 +482,11 @@ export function TransactionRowActionsButton({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity duration-150 hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 data-[state=open]:opacity-100"
+          className={
+            alwaysVisible
+              ? 'inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+              : 'inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity duration-150 hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 data-[state=open]:opacity-100'
+          }
           aria-label="Row actions"
         >
           <MoreHorizontal className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />

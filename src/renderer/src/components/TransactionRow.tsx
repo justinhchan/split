@@ -23,6 +23,12 @@ export interface TransactionRowProps {
    *  inside the Description cell so it isn't silently lost. Category isn't
    *  tracked here — it always inlines whether the window is wide or narrow. */
   shedCols?: { date?: boolean }
+  /** `'row'` (default) renders a `<tr>` inside the shared table; `'card'`
+   *  renders a stacked `<div>` for narrow viewports where the table-fixed
+   *  colgroup can't keep Description usable. Card mode prioritises
+   *  Description, inlines metadata + tag dots beneath it, and keeps the kebab
+   *  always visible. */
+  layout?: 'row' | 'card'
 }
 
 export function TransactionRow({
@@ -32,7 +38,8 @@ export function TransactionRow({
   onToggleSelect,
   selectedIds,
   visibleCols,
-  shedCols
+  shedCols,
+  layout = 'row'
 }: TransactionRowProps): JSX.Element {
   const updateTransaction = useAppStore((s) => s.updateTransaction)
 
@@ -101,6 +108,143 @@ export function TransactionRow({
 
   const dim = tx.excluded ? 'opacity-75' : ''
 
+  if (layout === 'card') {
+    return (
+      <TransactionRowMenu
+        tx={tx}
+        selectedIds={selectedIds}
+        onStartEditDescription={() => setEditingDescription(true)}
+        onStartEditAmount={() => setEditingAmount(true)}
+      >
+        <div
+          className={cn(
+            'group flex flex-col gap-1 border-b border-border px-3 py-2.5 transition-colors hover:bg-accent/30',
+            selected && 'bg-accent/40',
+            dim
+          )}
+        >
+          {/* Primary line: checkbox + description + amount. Mirrors the Gmail /
+              Linear mobile pattern — the most-identifying field stays
+              prominent, with the value pinned to the right so the eye can
+              skim a column of amounts down the list. */}
+          <div className="flex items-start gap-2">
+            <Checkbox
+              checked={selected}
+              onCheckedChange={() => onToggleSelect()}
+              aria-label={`Select ${tx.description}`}
+              className="checkbox-sm mt-1 shrink-0"
+            />
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              {editingDescription ? (
+                <Input
+                  ref={descriptionInput}
+                  value={draftDescription}
+                  onChange={(e) => setDraftDescription(e.target.value)}
+                  onBlur={commitDescription}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitDescription()
+                    if (e.key === 'Escape') {
+                      setDraftDescription(tx.description)
+                      setEditingDescription(false)
+                    }
+                  }}
+                  className="h-7 w-full text-sm"
+                />
+              ) : (
+                <span
+                  className={cn(
+                    'min-w-0 flex-1 truncate text-sm font-medium',
+                    tx.excluded && 'line-through'
+                  )}
+                >
+                  {tx.description}
+                </span>
+              )}
+              {tx.edited && (
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
+                  title="Edited"
+                />
+              )}
+            </div>
+            <div className="shrink-0 tabular-nums">
+              {editingAmount ? (
+                <Input
+                  ref={amountInput}
+                  value={draftAmount}
+                  onChange={(e) => setDraftAmount(e.target.value)}
+                  onBlur={commitAmount}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitAmount()
+                    if (e.key === 'Escape') {
+                      setDraftAmount(String(tx.amount))
+                      setEditingAmount(false)
+                    }
+                  }}
+                  className="h-7 w-24 text-right text-sm text-foreground"
+                  inputMode="decimal"
+                />
+              ) : (
+                <span
+                  onDoubleClick={() => setEditingAmount(true)}
+                  className={cn('text-sm', tx.excluded && 'line-through')}
+                >
+                  {formatCurrency(tx.amount)}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Secondary line: date · category · payment on the left, tag dots
+              + kebab on the right. `pl-7` lines up with the checkbox column
+              above (14px checkbox + 8px gap + 2px tweak) so the muted text
+              reads as a continuation of the description, not the checkbox. */}
+          <div className="flex items-center gap-2 pl-7">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="tabular-nums">{formatDate(tx.date)}</span>
+              {tx.isPayment && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span title="Auto-detected payment row">Payment</span>
+                </>
+              )}
+              {tx.category && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="truncate">{tx.category}</span>
+                </>
+              )}
+            </div>
+            {tx.tags.length > 0 && (
+              <div className="flex shrink-0 items-center gap-1">
+                {tx.tags.map((id) => {
+                  const p = peopleById[id]
+                  if (!p) return null
+                  return (
+                    <span
+                      key={id}
+                      className="h-2 w-2 rounded-full"
+                      style={{ backgroundColor: p.color }}
+                      title={p.name}
+                      aria-label={p.name}
+                    />
+                  )
+                })}
+              </div>
+            )}
+            <TransactionRowActionsButton
+              tx={tx}
+              selectedIds={selectedIds}
+              onStartEditDescription={() => setEditingDescription(true)}
+              onStartEditAmount={() => setEditingAmount(true)}
+              alwaysVisible
+            />
+          </div>
+        </div>
+      </TransactionRowMenu>
+    )
+  }
+
   return (
     <TransactionRowMenu
       tx={tx}
@@ -150,12 +294,20 @@ export function TransactionRow({
                     className="h-7 w-full text-sm"
                   />
                 ) : (
-                  <span className={cn('truncate', tx.excluded && 'line-through')}>
+                  <span
+                    className={cn(
+                      'min-w-0 flex-1 truncate',
+                      tx.excluded && 'line-through'
+                    )}
+                  >
                     {tx.description}
                   </span>
                 )}
                 {tx.edited && (
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" title="Edited" />
+                  <span
+                    className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
+                    title="Edited"
+                  />
                 )}
               </div>
               {/* Secondary metadata line: Category always inlines here (no
@@ -203,18 +355,16 @@ export function TransactionRow({
                     setEditingAmount(false)
                   }
                 }}
-                className="h-7 w-24 text-right text-sm"
+                className="h-7 w-24 text-right text-sm text-foreground"
                 inputMode="decimal"
               />
             ) : (
-              <button
-                type="button"
+              <span
                 onDoubleClick={() => setEditingAmount(true)}
-                className="-mx-1 rounded px-1 text-right focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                aria-label="Edit amount (double-click or right-click)"
+                className={cn(tx.excluded && 'line-through')}
               >
                 {formatCurrency(tx.amount)}
-              </button>
+              </span>
             )}
           </td>
         )}
