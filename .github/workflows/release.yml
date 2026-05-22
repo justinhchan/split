@@ -1,0 +1,124 @@
+name: Build & release latest
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# `contents: write` is required for the release job to delete + recreate the
+# rolling `latest` release and push assets to it.
+permissions:
+  contents: write
+
+# Queue runs so two quick pushes don't race to overwrite the same release.
+# `cancel-in-progress: true` because the second push's artifacts are what we
+# want — there's no value in finishing a stale build.
+concurrency:
+  group: release-latest
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing shouldn't cancel the other two — partial
+      # uploads are better than none while we investigate.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            build_script: build:mac
+            artifact_name: macos
+          - os: windows-latest
+            build_script: build:win
+            artifact_name: windows
+          - os: ubuntu-latest
+            build_script: build:linux
+            artifact_name: linux
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build installer
+        run: npm run ${{ matrix.build_script }}
+        env:
+          # Skip code signing. Users will see a Gatekeeper / SmartScreen
+          # warning the first time they open the app, but the builds are
+          # still usable. Wire in real certs by adding them as repo secrets
+          # and removing this line.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          # GitHub Releases token is consumed in the `release` job below,
+          # not here — electron-builder is configured with `publish:
+          # generic` so it won't try to publish during the build itself.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.artifact_name }}
+          # Only ship the user-facing installer files. electron-builder
+          # writes a lot of supporting metadata (`builder-debug.yml`,
+          # `latest*.yml`, `*.blockmap`) we don't want cluttering the
+          # release.
+          path: |
+            dist/*.dmg
+            dist/*-mac.zip
+            dist/*-setup.exe
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.snap
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release:
+    name: Update rolling release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all installers
+        uses: actions/download-artifact@v4
+        with:
+          path: installers
+          # Flatten the three per-OS artifact folders into one directory so
+          # the release step can glob them with a single pattern.
+          merge-multiple: true
+
+      - name: List downloaded installers
+        run: ls -lh installers/
+
+      - name: Delete previous "latest" release
+        # We replace the release entirely on every run rather than updating
+        # it in place. Asset names contain the package version and stay
+        # stable between builds, but a clean recreate also resets the
+        # publish date so users can see when the latest build landed.
+        run: |
+          gh release delete latest --cleanup-tag --yes 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish "latest" release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest build
+          body: |
+            Rolling build from `${{ github.sha }}` on `${{ github.ref_name }}`.
+
+            Updated automatically on every push to `main`. Builds are
+            unsigned — first launch on macOS needs right-click → Open;
+            first launch on Windows needs "More info → Run anyway".
+          # `make_latest: true` flags this as the Latest release in the UI
+          # so it shows up next to the repo description.
+          make_latest: 'true'
+          files: installers/*
+          fail_on_unmatched_files: true
